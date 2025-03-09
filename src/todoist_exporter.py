@@ -1,5 +1,7 @@
 import os
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional, Any
 
 import requests
@@ -27,10 +29,31 @@ class Task:
     due: Optional[dict[str, str]] = None
     completed_at: Optional[str] = None
     priority: Optional[int] = None  # only in active tasks
-    created_at: Optional[str] = None # only in active tasks
-    url: Optional[str] = None # only in active tasks
+    created_at: Optional[str] = None  # only in active tasks
+    url: Optional[str] = None  # only in active tasks
 
     sections_dict: Optional[dict[str, str]] = None
+
+    def __post_init__(self):
+        if self.section_id:
+            self.section_name = self.sections_dict[self.section_id]
+
+    def format_to_md(self):
+        if self.due:
+            due_txt = f" 📅 {self.due}"
+        else:
+            due_txt = ""
+
+        if self.created_at:
+            created_date = datetime.strptime(self.created_at, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%Y-%m-%d")
+            created_text = f" ➕ {created_date}"
+        else:
+            created_text = ""
+
+        if self.is_completed:
+            return f"- [x] {self.content}{due_txt}{created_text}"
+        else:
+            return f"- [ ] {self.content}{due_txt}{created_text}"
 
 
 
@@ -84,6 +107,7 @@ class TodoistToObsidian:
 
     def get_completed_tasks(self, project_id: str, sections_dict: Optional[dict] = None, since: Optional[str] = None,
                             until: Optional[str] = None) -> list[Task]:
+        # Since until format: 2021-4-29T10:13:00
         sections = sections_dict
         params = {}
         if project_id:
@@ -111,10 +135,70 @@ class TodoistToObsidian:
                 parent_id=item.get('parent_id'),
                 labels=item.get('labels', []),
                 is_completed=True,  # Completed tasks are always marked as completed
-                due=item.get('due'),
+                due=item.get("due", {}).get("date", "") if item.get("due") else "",
                 completed_at=item.get('completed_at'),
                 sections_dict=sections)
             tasks.append(task)
         return tasks
 
+    def get_active_tasks(self, project_id: str, sections_dict: Optional[dict] = None) -> list[Task]:
+        sections = sections_dict
+        response = requests.get(f"{self.rest_url}/tasks", headers=self.headers, params={"project_id": project_id})
+        response.raise_for_status()
+        resp = response.json()
 
+        tasks = []
+        for item in resp:
+            task = Task(
+                id=item['id'],
+                content=item['content'],
+                project_id=item['project_id'],
+                section_id=item.get('section_id'),
+                parent_id=item.get('parent_id'),
+                labels=item.get('labels', []),
+                is_completed=item.get('is_completed'),
+                due=item.get("due", {}).get("date", "") if item.get("due") else "",
+                completed_at=item.get('completed_at'),
+                priority=item.get('priority'),
+                created_at=item.get('created_at'),
+                url=item.get('url'),
+                sections_dict=sections)
+            tasks.append(task)
+        return tasks
+
+
+    def export_tasks_to_markdown(self, sections, tasks):
+        markdown_content = ""
+
+        markdown_content += f"# Project\n\n"
+        tasks_without_section = [t for t in tasks if not t.section_id]
+        if tasks_without_section:
+            for task in tasks_without_section:
+                markdown_content += task.format_to_md() + "\n"
+
+        for section_id, section_name in sections.items():
+            markdown_content += f"## {section_name}"+ "\n"
+
+            # Filter tasks for this section
+            section_tasks = [t for t in tasks if t.section_id == section_id]
+
+            for task in section_tasks:
+                markdown_content += task.format_to_md() + "\n"
+
+            markdown_content += "\n"
+
+        markdown_content += "\n"
+
+        # Write to a Markdown file
+        with open("todoist_tasks.md", "w", encoding="utf-8") as file:
+            file.write(markdown_content)
+
+        return markdown_content
+
+    def get_project_id(self, search: str):
+        matching_projects = []
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        for project in self.projects.values():
+            if pattern.search(project.name):
+                matching_projects.append({"name": project.name, "id": project.id})
+        return matching_projects if matching_projects else None
