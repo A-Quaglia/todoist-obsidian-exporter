@@ -167,25 +167,28 @@ class TodoistToObsidian:
         return tasks
 
 
-    def export_tasks_to_markdown(self, sections, tasks):
+    def export_tasks_to_markdown(self, sections, tasks, project_name: Optional[str] = None):
         markdown_content = ""
 
-        markdown_content += f"# Project\n\n"
+        if project_name:
+            markdown_content += f"# {project_name}\n\n"
+        else:
+            markdown_content += f"# Project\n\n"
         tasks_without_section = [t for t in tasks if not t.section_id]
         if tasks_without_section:
             for task in tasks_without_section:
                 markdown_content += task.format_to_md() + "\n"
+        if sections:
+            for section_id, section_name in sections.items():
+                markdown_content += f"## {section_name}"+ "\n"
 
-        for section_id, section_name in sections.items():
-            markdown_content += f"## {section_name}"+ "\n"
+                # Filter tasks for this section
+                section_tasks = [t for t in tasks if t.section_id == section_id]
 
-            # Filter tasks for this section
-            section_tasks = [t for t in tasks if t.section_id == section_id]
+                for task in section_tasks:
+                    markdown_content += task.format_to_md() + "\n"
 
-            for task in section_tasks:
-                markdown_content += task.format_to_md() + "\n"
-
-            markdown_content += "\n"
+                markdown_content += "\n"
 
         markdown_content += "\n"
 
@@ -202,3 +205,9 @@ class TodoistToObsidian:
             if pattern.search(project.name):
                 matching_projects.append({"name": project.name, "id": project.id})
         return matching_projects if matching_projects else None
+
+    def get_project_name_by_id(self, search_id: str) -> Optional[str]:
+        for name, project in self.projects.items():
+            if project.id == search_id:
+                return name
+        return None  # Return None if no match is found
